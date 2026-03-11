@@ -12,7 +12,8 @@ def ask_model(prompt, page_input):
     pages = page_input if isinstance(page_input, list) else [page_input]
 
     combined_text = "Here is the extracted raw text from the document:\n"
-    for p in pages:
+    for i, p in enumerate(pages):
+        combined_text += f"---\nPAGE {i+1}\n---\n"
         combined_text += p.get("text", "") + "\n\n"
         
     combined_text += f"---\n\n{prompt}"
@@ -40,7 +41,7 @@ def ask_model(prompt, page_input):
                 "content": content
             }
         ],
-        max_tokens=4096,
+        max_tokens=16384,
         temperature=0.0
     )
 
