@@ -210,8 +210,6 @@ Return ONLY a JSON object:
 }
 
 CRITICAL:
-- Ensure LENI MONIKA and MARIHOT match even if descriptions differ slightly. 
-- Match by Reference Number (e.g. 57301221119) if present.
 - Return raw JSON ONLY.
 """
 
