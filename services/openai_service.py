@@ -8,18 +8,9 @@ client = OpenAI(
 )
 
 def ask_model(prompt, page_input):
-
     pages = page_input if isinstance(page_input, list) else [page_input]
-
-    combined_text = "Here is the extracted raw text from the document:\n"
-    for i, p in enumerate(pages):
-        combined_text += f"---\nPAGE {i+1}\n---\n"
-        combined_text += p.get("text", "") + "\n\n"
-        
-    combined_text += f"---\n\n{prompt}"
-
     content = [
-        {"type": "text", "text": combined_text}
+        {"type": "text", "text": prompt}
     ]
 
     for p in pages:

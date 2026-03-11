@@ -89,95 +89,38 @@ def clear_logs():
 
 
 
-BRANCH_EXTRACT_PROMPT = """
-You are a highly accurate data extraction system. Extract ALL daily transactions from the provided Branch Daily Transactions document.
+DIRECT_RECONCILIATION_PROMPT = """
+You are a top-tier financial auditor. Your task is to perform a 100% COMPLETE and ACCURATE bank reconciliation.
+You have been provided with high-resolution images of two documents.
 
-The document visual columns are: Voucher No. | Chart of Account | Description | Reference No. | Debit | Credit | Balance
+---
+DOCUMENTS:
+1. BRANCH TRANSACTION LOG (CONFINS)
+   - Columns: Voucher No, Description, Reference No, Debit, Credit, Balance.
+   - POLARITY: DEBIT = Money IN, CREDIT = Money OUT.
 
-CRITICAL - RAW TEXT COLUMN ORDER:
-In the raw text extracted from the PDF, the two amount columns appear REVERSED compared to the visual layout:
-  <voucher_no> <date> <credit_amount> <debit_amount> <chart_of_account> <description>
+2. FINANCE BANK STATEMENT (RK)
+   - Columns: Date, Description, Ref, Debit, Credit, Balance.
+   - POLARITY: CREDIT = Money IN, DEBIT = Money OUT.
 
-The FIRST numeric value after the date = CREDIT
-The SECOND numeric value after the date = DEBIT
+---
+RECONCILIATION MANDATES:
+1. "kurang" section: Match Branch DEBIT (Money In) with Finance CREDIT (Money In).
+   - MANDATORY: Include ALL payments that match exists in both finance and branch.
+   - ARIS PERMADI AGGREGATION: Match Finance entry (2,102,000) with THREE Branch entries: 2,085,000 + 16,800 + 200. Transcribe 16,800 carefully.
 
-Verified examples from this document:
-  Raw: "999IPKB097626030018 2/3/2026 0.00 30,613,000.00 21991120-AP Contract..."
-  -> credit=0.0, debit=30613000.0   [30,613,000.00 is in DEBIT column in the image]
+2. "tambah" section: Match Branch CREDIT (Money Out) with Finance DEBIT (Money Out).
+   - MANDATORY: Include FEE ADM, SERVICE CHARGE, and other bank fees/transfers.
 
-  Raw: "999IPKB097626030053 2/3/2026 2,085,000.00 0.00 11120101 Payment Receive#57301220481-ARIS PERMADI"
-  -> credit=2085000.0, debit=0.0   [2,085,000.00 is in CREDIT column in the image]
+3. FUZZY MATCHING: Be flexible. If a names from branch is similar to finance, match it. But make sure both has the same names, when calculated both transaction from finance and branch is equal, put it as match into kurang or lebih according to kredit or debit
 
-  Raw: "999IPKB097626030075 03/03/2026 0.00 778,653,400.00 11012901 Transfer Fu..."
-  -> credit=0.0, debit=778653400.0
+---
+CRITICAL AUDIT RULES:
+1. DO NOT BE LAZY: You must process EVERY transaction from EVERY page. Omissions like Doly Chandra or Daswir are unacceptable.
+2. ACCURACY: Read the numbers from the images pixel-perfectly.
+3. COMPLETENESS: Your output JSON must contain ALL matching groups found across all 11+ pages.
 
-Fields to extract for each transaction:
-- voucher_no: Voucher No.
-- chart_of_account: Chart of Account (just the code, e.g. 21991120)
-- description: Full description text (the part after chart of account, including Receive#, PDC Clearing# etc. and any name)
-- reference_no: Reference No. (the date-like value after Voucher)
-- debit: Debit amount (float, 0.0 if none) — SECOND number in raw text
-- credit: Credit amount (float, 0.0 if none) — FIRST number in raw text
-- balance: Running Balance (float, can be negative)
-
-CRITICAL:
-- Amounts use Indonesian format '30,613,000.00' — commas are thousand separators, dot is decimal. Parse 30,613,000.00 as 30613000.0
-- Trust the visual image column headers: the column labeled "Debit" is Debit, "Credit" is Credit.
-- Return raw JSON ONLY. No markdown.
-"""
-
-SUMMARY_EXTRACT_PROMPT = """
-Extract summary information:
-- begin_balance: Opening/Beginning Balance
-- end_balance: Closing/Ending Balance
-Return JSON: {"begin_balance": 0.0, "end_balance": 0.0}
-"""
-
-
-FINANCE_EXTRACT_PROMPT = """
-You are a highly accurate data extraction system. Extract ALL bank transactions from the provided Finance Bank Statement (Rekening Koran) document.
-
-Fields to extract for each transaction:
-- transaction_date: Date
-- transaction_description: Description
-- transaction_ref: Ref
-- debit: Debit amount (float)
-- credit: Credit amount (float)
-- end_balance: End Balance (float)
-
-CRITICAL INSTRUCTIONS:
-- IDENTIFY DEBIT AND CREDIT COLUMNS CAREFULLY. Check headers (Debit/Credit or DB/CR).
-- Amounts use format '30,613,000.00'. Ignore commas.
-- Return raw JSON ONLY. Do NOT enclose in markdown.
-"""
-
-
-RECONCILIATION_PROMPT = """
-You are a highly skilled financial analyst performing bank reconciliation.
-You are given two lists of transactions in JSON format:
-1. Branch Transactions (Saldo CONFINS)
-2. Finance Transactions (Saldo RK)
-
-Your task is to reconcile these two sets of data using fuzzy Name, Reference Number, and Amount matching.
-
-Matching Ground Rules:
-1. Fuzzy Name Match: Look for names in the descriptions.
-   - Branch: 'Receive#57301221119-MARIHOT BR SITUNGKIR'
-   - Finance: 'PEL MARIHOT SITUNGK/BM11 03FI/57301221119'
-   - They match on 'MARIHOT' and the reference '57301221119'.
-2. Reference Match: Look for matching numeric strings (e.g., '57301221119', '57501241011') in both descriptions.
-3. Amount Match (with aggregation):
-   - Multiple Branch entries for the same identifier may sum to one Finance entry.
-   - Example: ARIS PERMADI (Br: 2,085,000 + 16,800 + 200) = (Fin: 2,102,000).
-
-Classification Rules:
-- "kurang" = Matching where Finance is CREDIT and Branch is DEBIT
-  Logic: Money coming in to the bank vs recorded as outgoing in Branch.
-- "tambah" = Matching where Finance is DEBIT and Branch is CREDIT
-  Logic: Money going out from the bank vs recorded as incoming in Branch.
-
-Output Format:
-Return ONLY a JSON object:
+Output ONLY a JSON object:
 {
   "reconciliation_summary": {
      "saldo_rk": 0.0,
@@ -186,21 +129,17 @@ Return ONLY a JSON object:
      "saldo_akhir_confins": 0.0
   },
   "tambah": [
-     // Finance=Debit, Branch=Credit
      {
        "finance_transaction": { "date": "", "description": "", "amount": 0.0 },
        "branch_transactions": [ { "date": "", "description": "", "amount": 0.0 } ],
-       "total_amount": 0.0,
-       "common_identifier": "..."
+       "total_amount": 0.0, "common_identifier": "..."
      }
   ],
   "kurang": [
-     // Finance=Credit, Branch=Debit
      {
        "finance_transaction": { "date": "", "description": "", "amount": 0.0 },
        "branch_transactions": [ { "date": "", "description": "", "amount": 0.0 } ],
-       "total_amount": 0.0,
-       "common_identifier": "..."
+       "total_amount": 0.0, "common_identifier": "..."
      }
   ],
   "unmatched_transactions": {
@@ -208,9 +147,6 @@ Return ONLY a JSON object:
      "finance": []
   }
 }
-
-CRITICAL:
-- Return raw JSON ONLY.
 """
 
 
@@ -219,44 +155,23 @@ async def process_reconciliation(branch_bytes, finance_bytes):
     branch_pages = split_pdf_pages(branch_bytes)
     finance_pages = split_pdf_pages(finance_bytes)
     
-    # Extract Summaries
-    branch_summary = parse_json_response(ask_model(SUMMARY_EXTRACT_PROMPT, branch_pages[0]), default_val={})
-    finance_summary = parse_json_response(ask_model(SUMMARY_EXTRACT_PROMPT, finance_pages[0]), default_val={})
+    labeled_pages = []
     
-    branch_txs = []
-    for i, page in enumerate(branch_pages):
-        page_prompt = BRANCH_EXTRACT_PROMPT + f"\n\nCRITICAL: Processing PAGE {i+1} of {len(branch_pages)}."
-        res = ask_model(page_prompt, page)
-        save_log(f"branch_extract_page_{i+1}", res)
-        txs = parse_json_response(res, default_val=[])
-        if isinstance(txs, list):
-            branch_txs.extend(txs)
-    
-    # Heal Branch
-    branch_txs, _ = validate_and_heal_transactions(branch_txs, parse_float(branch_summary.get("begin_balance")), label="branch", is_branch=True)
-            
-    finance_txs = []
-    for i, page in enumerate(finance_pages):
-        page_prompt = FINANCE_EXTRACT_PROMPT + f"\n\nCRITICAL: Processing PAGE {i+1} of {len(finance_pages)}."
-        res = ask_model(page_prompt, page)
-        save_log(f"finance_extract_page_{i+1}", res)
-        txs = parse_json_response(res, default_val=[])
-        if isinstance(txs, list):
-            finance_txs.extend(txs)
+    # Label Branch pages
+    for i, p in enumerate(branch_pages):
+        p_labeled = p.copy()
+        p_labeled["text"] = f"--- [DOCUMENT: BRANCH TRANSACTION LOG, PAGE {i+1}] ---\n" + p.get("text", "")
+        labeled_pages.append(p_labeled)
+        
+    # Label Finance pages
+    for i, p in enumerate(finance_pages):
+        p_labeled = p.copy()
+        p_labeled["text"] = f"--- [DOCUMENT: FINANCE BANK STATEMENT, PAGE {i+1}] ---\n" + p.get("text", "")
+        labeled_pages.append(p_labeled)
 
-    # Heal Finance
-    finance_txs, _ = validate_and_heal_transactions(finance_txs, parse_float(finance_summary.get("begin_balance")), label="finance", is_branch=False)
-
-    data_for_reconciliation = {
-        "branch_transactions": branch_txs,
-        "finance_transactions": finance_txs
-    }
-    
-    data_str = json.dumps(data_for_reconciliation, indent=2)
-    reconcile_prompt = f"{RECONCILIATION_PROMPT}\n\nDATA:\n{data_str}"
-    
-    res = ask_model(reconcile_prompt, [])
-    save_log("reconciliation_final", res)
+    # Perform Direct Reconciliation in one pass
+    res = ask_model(DIRECT_RECONCILIATION_PROMPT, labeled_pages)
+    save_log("reconciliation_direct_all", res)
     reconciliation = parse_json_response(res, default_val={})
     
     return reconciliation
