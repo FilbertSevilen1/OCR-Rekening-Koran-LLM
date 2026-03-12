@@ -89,89 +89,184 @@ def clear_logs():
 
 
 
-DIRECT_RECONCILIATION_PROMPT = """
-You are a top-tier financial auditor. Your task is to perform a 100% COMPLETE and ACCURATE bank reconciliation.
-You have been provided with high-resolution images of two documents.
+BRANCH_EXTRACTION_PROMPT = """
+You are a financial data extractor. Your task is to extract every transaction from a BRANCH TRANSACTION LOG (CONFINS).
 
----
-DOCUMENTS:
-1. BRANCH TRANSACTION LOG (CONFINS)
-   - Columns: Voucher No, Description, Reference No, Debit, Credit, Balance.
-   - POLARITY: DEBIT = Money IN, CREDIT = Money OUT.
+DOCUMENT STRUCTURE:
+Columns: Transaction Date, Voucher No, Chart of Account, Description, Reference No., Debit, Credit, Balance.
+POLARITY: DEBIT = Money IN, CREDIT = Money OUT.
 
-2. FINANCE BANK STATEMENT (RK)
-   - Columns: Date, Description, Ref, Debit, Credit, Balance.
-   - POLARITY: CREDIT = Money IN, DEBIT = Money OUT.
+EXTRACTION RULES:
+1. Extract ALL rows with a numeric Debit or Credit.
+2. For each row, extract:
+   - date: The transaction date (DD/MM/YYYY)
+   - voucher_no
+   - coa (Chart of Account)
+   - description
+   - debit: absolute number
+   - credit: absolute number
+   - balance
+3. Description extraction: Extract Description as Complete as possible, description may have more than one lines.
+4. Account Name Rule: If Description contains "-", the text after "-" is the account name. Otherwise, use the whole description.
 
----
-RECONCILIATION MANDATES:
-1. "kurang" section: Match Branch DEBIT (Money In) with Finance CREDIT (Money In).
-   - MANDATORY: Include ALL payments that match exists in both finance and branch.
-   - ARIS PERMADI AGGREGATION: Match Finance entry (2,102,000) with THREE Branch entries: 2,085,000 + 16,800 + 200. Transcribe 16,800 carefully.
+Return ONLY a JSON list of objects:
+[
+  {
+    "date": "DD/MM/YYYY",
+    "voucher_no": "",
+    "coa": "",
+    "description": "",
+    "account_name": "",
+    "debit": 0.0,
+    "credit": 0.0,
+    "balance": 0.0
+  }
+]
+"""
 
-2. "tambah" section: Match Branch CREDIT (Money Out) with Finance DEBIT (Money Out).
-   - MANDATORY: Include FEE ADM, SERVICE CHARGE, and other bank fees/transfers.
+FINANCE_EXTRACTION_PROMPT = """
+You are a financial data extractor. Your task is to extract every transaction from a FINANCE BANK STATEMENT (RK).
 
-3. FUZZY MATCHING: Be flexible. If a names from branch is similar to finance, match it. But make sure both has the same names, when calculated both transaction from finance and branch is equal, put it as match into kurang or lebih according to kredit or debit
+DOCUMENT STRUCTURE:
+Columns: Transaction Date, Description, Amount (Debit/Credit), Balance.
 
----
-CRITICAL AUDIT RULES:
-1. DO NOT BE LAZY: You must process EVERY transaction from EVERY page. Omissions like Doly Chandra or Daswir are unacceptable.
-2. ACCURACY: Read the numbers from the images pixel-perfectly.
-3. COMPLETENESS: Your output JSON must contain ALL matching groups found across all 11+ pages.
+EXTRACTION RULES:
+1. Extract ALL rows with a numeric value in ANY amount column.
+2. For each row, extract:
+   - date: The transaction date (DD/MM/YYYY)
+   - description: The full transaction description (handle multi-line)
+   - amount: The absolute numeric value
+   - balance: The numeric value in 'End Balance' column
+3. Each row usually contains either a Debit or Credit value.
 
-Output ONLY a JSON object:
+Return ONLY a JSON list of objects:
+[
+  {
+    "date": "DD/MM/YYYY",
+    "description": "...",
+    "amount": 0.0,
+    "balance": 0.0
+  }
+]
+"""
+
+CLEANSE_BRANCH_PROMPT = """
+You are a financial data cleanser. Your task is to consolidate multiple entries in a BRANCH TRANSACTION LOG (CONFINS) that belong to the same logical transaction.
+
+CONSOLIDATION RULES:
+1. Group rows where:
+   - they have the same date
+   - they have very similar descriptions or the same account_name
+   - they appear sequentially
+2. For each group:
+   - SUM the 'debit' and 'credit' values.
+   - Keep the 'account_name' and 'date'.
+   - Use the description from the largest amount row.
+   - Use the 'balance' from the LAST row in the group.
+
+Return ONLY a JSON list of consolidated objects:
+[
+  {
+    "date": "DD/MM/YYYY",
+    "description": "...",
+    "account_name": "...",
+    "debit": 0.0,
+    "credit": 0.0,
+    "balance": 0.0
+  }
+]
+"""
+
+RECONCILIATION_MATCHING_PROMPT = """
+You are a forensic auditor. Your task is to reconcile TWO lists of transactions: BRANCH (CONFINS) and FINANCE (RK).
+
+SOURCE OF TRUTH FOR POLARITY (TAMBAH/KURANG):
+Use the BRANCH list as the source of truth for categorization.
+
+MATCHING LOGIC:
+1. Date Match (IMPORTANT): 
+   - Dates should ideally match exactly.
+   - Allow for ±1 day difference as bank processing might lag.
+2. Name Match (FLEXIBLE): 
+   - Branch 'account_name' is often a substring of Finance 'description'.
+   - Be flexible with wording (e.g., "Budi" vs "Budi Santoso").
+3. Amount Match:
+   - Amounts MUST be identical.
+4. Category:
+   - Branch DEBIT (IN) matches Finance -> Category "KURANG".
+   - Branch CREDIT (OUT) matches Finance -> Category "TAMBAH".
+
+OUTPUT FORMAT:
+Return ONLY a JSON object:
 {
   "reconciliation_summary": {
-     "saldo_rk": 0.0,
-     "saldo_confins": 0.0,
-     "saldo_akhir_rk": 0.0,
-     "saldo_akhir_confins": 0.0
+    "saldo_rk": 0.0,
+    "saldo_confins": 0.0,
+    "saldo_akhir_rk": 0.0,
+    "saldo_akhir_confins": 0.0
   },
   "tambah": [
-     {
-       "finance_transaction": { "date": "", "description": "", "amount": 0.0 },
-       "branch_transactions": [ { "date": "", "description": "", "amount": 0.0 } ],
-       "total_amount": 0.0, "common_identifier": "..."
-     }
+    {
+      "finance_transaction": { "date": "", "description": "", "amount": 0.0 },
+      "branch_transactions": [ { "date": "", "description": "", "amount": 0.0 } ],
+      "total_amount": 0.0,
+      "common_identifier": ""
+    }
   ],
   "kurang": [
-     {
-       "finance_transaction": { "date": "", "description": "", "amount": 0.0 },
-       "branch_transactions": [ { "date": "", "description": "", "amount": 0.0 } ],
-       "total_amount": 0.0, "common_identifier": "..."
-     }
+    {
+      "finance_transaction": { "date": "", "description": "", "amount": 0.0 },
+      "branch_transactions": [ { "date": "", "description": "", "amount": 0.0 } ],
+      "total_amount": 0.0,
+      "common_identifier": ""
+    }
   ],
   "unmatched_transactions": {
-     "branch": [],
-     "finance": []
+    "branch": [],
+    "finance": []
   }
 }
 """
-
 
 async def process_reconciliation(branch_bytes, finance_bytes):
     clear_logs()
     branch_pages = split_pdf_pages(branch_bytes)
     finance_pages = split_pdf_pages(finance_bytes)
     
-    labeled_pages = []
-    
-    # Label Branch pages
-    for i, p in enumerate(branch_pages):
-        p_labeled = p.copy()
-        p_labeled["text"] = f"--- [DOCUMENT: BRANCH TRANSACTION LOG, PAGE {i+1}] ---\n" + p.get("text", "")
-        labeled_pages.append(p_labeled)
-        
-    # Label Finance pages
-    for i, p in enumerate(finance_pages):
-        p_labeled = p.copy()
-        p_labeled["text"] = f"--- [DOCUMENT: FINANCE BANK STATEMENT, PAGE {i+1}] ---\n" + p.get("text", "")
-        labeled_pages.append(p_labeled)
+    all_branch_txs_raw = []
+    all_finance_txs = []
 
-    # Perform Direct Reconciliation in one pass
-    res = ask_model(DIRECT_RECONCILIATION_PROMPT, labeled_pages)
-    save_log("reconciliation_direct_all", res)
+    # Step 1: Extract Branch Transactions
+    for i, p in enumerate(branch_pages):
+        print(f"Extracting Branch Page {i+1}...")
+        res = ask_model(BRANCH_EXTRACTION_PROMPT, p)
+        txs = parse_json_response(res, default_val=[])
+        if isinstance(txs, list):
+            all_branch_txs_raw.extend(txs)
+
+    # Step 2: Extract Finance Transactions
+    for i, p in enumerate(finance_pages):
+        print(f"Extracting Finance Page {i+1}...")
+        res = ask_model(FINANCE_EXTRACTION_PROMPT, p)
+        txs = parse_json_response(res, default_val=[])
+        if isinstance(txs, list):
+            all_finance_txs.extend(txs)
+            
+    save_log("branch_extract_raw", json.dumps(all_branch_txs_raw, indent=2))
+    save_log("finance_extract_all", json.dumps(all_finance_txs, indent=2))
+
+    # Step 3: Cleanse Branch Transactions (Consolidation)
+    print("Cleansing and Consolidating Branch Transactions...")
+    cleansing_input = json.dumps(all_branch_txs_raw, indent=2)
+    res_cleansed = ask_model(CLEANSE_BRANCH_PROMPT + "\n\nDATA:\n" + cleansing_input, {})
+    all_branch_txs = parse_json_response(res_cleansed, default_val=all_branch_txs_raw)
+    save_log("branch_extract_cleansed", json.dumps(all_branch_txs, indent=2))
+
+    # Step 4: Reconciliation Matching
+    match_data = f"\n\n### BRANCH TRANSACTIONS (CLEANSED):\n{json.dumps(all_branch_txs, indent=2)}\n\n### FINANCE TRANSACTIONS:\n{json.dumps(all_finance_txs, indent=2)}"
+    print("Performing Reconciliation Matching...")
+    res = ask_model(RECONCILIATION_MATCHING_PROMPT + match_data, {})
+    save_log("reconciliation_final", res)
     reconciliation = parse_json_response(res, default_val={})
     
     return reconciliation
