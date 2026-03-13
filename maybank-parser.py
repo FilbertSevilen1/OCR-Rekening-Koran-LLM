@@ -205,7 +205,8 @@ def export_excel(df, path):
             print(f"[+] File was open. Exported to {alt_path}")
 
 if __name__ == "__main__":
-    pdf_file = r"Templates\RK BII PKB 020326.pdf"
+    pdf_file = r"Templates\RK BII MGD 120226 2.pdf"
+    # pdf_file = r"Templates\RK BII PKB 020326.pdf"
     if os.path.exists(pdf_file):
         df_result = parse_pdf(pdf_file)
         export_excel(df_result, "maybank_final_output.xlsx")
