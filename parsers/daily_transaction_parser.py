@@ -159,10 +159,10 @@ def export_excel(df, path):
             print(f"[+] File was open. Exported to {alt_path}")
 
 if __name__ == "__main__":
-    print("[*] Starting Daily Pekanbaru Parser...")
+    print("[*] Starting Daily Transaction Parser...")
     pdf_file = os.path.join("Templates", "Daily pekanbaru tgl.030326.pdf")
     if os.path.exists(pdf_file):
         df_result = parse_pdf(pdf_file)
-        export_excel(df_result, "daily_pekanbaru_output.xlsx")
+        export_excel(df_result, "daily_transaction_output.xlsx")
     else:
         print(f"[!] File not found: {pdf_file}")
