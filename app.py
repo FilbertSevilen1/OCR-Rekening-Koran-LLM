@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 
 from orchestrator.statement_orchestrator import process_statement
 from consolidation import consolidate
-from export_service import create_export_file
+from export_service import create_export_file, create_reconciliation_export
 from parsers.daily_transaction_parser import parse_pdf as parse_daily_tx
 from parsers.maybank_parser import parse_pdf as parse_maybank_tx
 
@@ -308,7 +308,7 @@ async def parse_maybank(file: UploadFile = File(...), export_excel: bool = Form(
     return df.to_dict(orient='records')
 
 @app.post("/reconciliate")
-async def reconciliate_statements(daily_file: UploadFile = File(...), maybank_file: UploadFile = File(...)):
+async def reconciliate_statements(daily_file: UploadFile = File(...), maybank_file: UploadFile = File(...), export_file: bool = Form(False)):
     """
     Reconciliate daily transaction and Maybank statement files.
     Matches transactions by name and amount.
@@ -316,12 +316,11 @@ async def reconciliate_statements(daily_file: UploadFile = File(...), maybank_fi
     Args:
         daily_file: Daily transaction PDF file
         maybank_file: Maybank statement PDF file
+        export_file: If true, returns Excel file with 3 sheets instead of JSON
         
     Returns:
-        Dictionary containing:
-        - matched_transactions: Transactions found in both files
-        - unmatched_daily_transactions: Daily transactions not found in Maybank
-        - unmatched_maybank_transactions: Maybank transactions not found in daily
+        If export_file is False: Dictionary containing matched and unmatched transactions
+        If export_file is True: Excel file with sheets for matched, unmatched daily, unmatched maybank
     """
     daily_content = await daily_file.read()
     maybank_content = await maybank_file.read()
@@ -330,5 +329,13 @@ async def reconciliate_statements(daily_file: UploadFile = File(...), maybank_fi
     maybank_df = parse_maybank_tx(io.BytesIO(maybank_content))
     
     reconciliation = reconciliate_transactions(daily_df, maybank_df)
+    
+    if export_file:
+        output = create_reconciliation_export(reconciliation, daily_df, maybank_df)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=reconciliation_export.xlsx"}
+        )
     
     return reconciliation
