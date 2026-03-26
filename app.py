@@ -86,6 +86,10 @@ def reconciliate_transactions(daily_df: pd.DataFrame, maybank_df: pd.DataFrame) 
     
     # Ensure Debit and Credit columns are numeric
     daily_df['Debit'] = pd.to_numeric(daily_df['Debit'], errors='coerce').fillna(0)
+    if 'Credit' in daily_df.columns:
+        daily_df['Credit'] = pd.to_numeric(daily_df['Credit'], errors='coerce').fillna(0)
+    else:
+        daily_df['Credit'] = 0.0
     maybank_df['Credit'] = pd.to_numeric(maybank_df['Credit'], errors='coerce').fillna(0)
     maybank_df['Debit'] = pd.to_numeric(maybank_df['Debit'], errors='coerce').fillna(0)
     
@@ -93,16 +97,18 @@ def reconciliate_transactions(daily_df: pd.DataFrame, maybank_df: pd.DataFrame) 
     daily_df['Name'] = daily_df['Description'].apply(extract_name_from_description)
     daily_df['TransactionID'] = daily_df['Description'].apply(extract_transaction_id_from_description)
     
-    # Group daily transactions by TransactionID and sum debits
+    # Group daily transactions by TransactionID and sum debits and credits
     daily_grouped = []
     for tx_id, group in daily_df.groupby('TransactionID'):
         if tx_id:  # Only process if transaction ID exists
             total_debit = group['Debit'].sum()
+            total_credit = group['Credit'].sum()
             name = group['Name'].iloc[0]  # Use first name in group
             daily_grouped.append({
                 "transaction_id": tx_id,
                 "name": name,
                 "total_debit": total_debit,
+                "total_credit": total_credit,
                 "count": len(group),
                 "transactions": group.to_dict(orient='records')
             })
@@ -134,15 +140,21 @@ def reconciliate_transactions(daily_df: pd.DataFrame, maybank_df: pd.DataFrame) 
             # Strategy 2: Match by name and amount
             if not match_found and daily_tx['name'] and maybank_tx['Name']:
                 name_matches = fuzzy_match_name(daily_tx['name'], maybank_tx['Name'])
-                # Credit column contains the amount for the transaction
-                amount_matches = abs(daily_tx['total_debit'] - float(maybank_tx['Credit'])) < 0.01
+                # Check for amount match by comparing debit/credits
+                amount_matches = (
+                    abs(daily_tx['total_debit'] - float(maybank_tx['Credit'])) < 0.01 or
+                    abs(daily_tx['total_credit'] - float(maybank_tx['Debit'])) < 0.01 or
+                    abs(daily_tx['total_debit'] - float(maybank_tx['Debit'])) < 0.01 or
+                    abs(daily_tx['total_credit'] - float(maybank_tx['Credit'])) < 0.01
+                )
                 
                 if name_matches and amount_matches:
                     match_found = True
                     match_reason = "name_and_amount"
             
             if match_found:
-                daily_type = "debit" if daily_tx.get('total_debit', 0) > 0 else "credit" if daily_tx.get('total_debit', 0) < 0 else "unknown"
+                daily_type = "debit" if daily_tx.get('total_debit', 0) > 0 else "credit" if daily_tx.get('total_credit', 0) > 0 else "unknown"
+                maybank_type = "debit" if float(maybank_tx.get('Debit', 0)) > 0 else "credit" if float(maybank_tx.get('Credit', 0)) > 0 else "unknown"
                 matched_amount = float(maybank_tx['Credit']) if maybank_tx.get('Credit') is not None else 0.0
                 matched_name = daily_tx.get('name') or maybank_tx.get('Name') or ""
 
@@ -153,6 +165,7 @@ def reconciliate_transactions(daily_df: pd.DataFrame, maybank_df: pd.DataFrame) 
                     "match_confidence": match_reason,
                     "matched_amount": matched_amount,
                     "daily_type": daily_type,
+                    "maybank_type": maybank_type,
                     "matched_name": matched_name
                 })
                 unmatched_daily.remove(daily_tx)

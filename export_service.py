@@ -50,11 +50,13 @@ def create_reconciliation_export(reconciliation_data, daily_df=None, maybank_df=
                     "Match Confidence": m.get("match_confidence", ""),
                     "Matched Amount": m.get("matched_amount", ""),
                     "Daily Type": m.get("daily_type", ""),
+                    "Maybank Type": m.get("maybank_type", ""),
                     "Matched Name": m.get("matched_name", ""),
                     # Daily transaction fields
                     "Daily Transaction ID": daily_tx.get("transaction_id", ""),
                     "Daily Name": daily_tx.get("name", ""),
                     "Daily Total Debit": daily_tx.get("total_debit", ""),
+                    "Daily Total Credit": daily_tx.get("total_credit", ""),
                     "Daily Count": daily_tx.get("count", ""),
                     # Maybank transaction fields
                     "Maybank Transaction Date": maybank_tx.get("Transaction Date", ""),
@@ -79,6 +81,7 @@ def create_reconciliation_export(reconciliation_data, daily_df=None, maybank_df=
                     "Transaction ID": ud.get("transaction_id", ""),
                     "Name": ud.get("name", ""),
                     "Total Debit": ud.get("total_debit", ""),
+                    "Total Credit": ud.get("total_credit", ""),
                     "Count": ud.get("count", ""),
                 }
                 daily_rows.append(row)
